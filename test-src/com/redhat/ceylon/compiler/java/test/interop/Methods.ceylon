@@ -25,7 +25,7 @@ void methods() {
     File f2 = File("file2");
     print(f1.canRead());
     Integer cmp = f1.compareTo(f2);
-    //File f3 = f1.createTempFile("", ""); // Does not work
-    File f3 = f1.createTempFile("", "", f2);
+    File f3 = f1.createTempFile("", "");
+    File f4 = f1.createTempFile("", "", f2);
     f1.listFiles();
 }

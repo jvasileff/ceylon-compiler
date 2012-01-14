@@ -64,6 +64,7 @@ import com.redhat.ceylon.compiler.typechecker.model.Module;
 import com.redhat.ceylon.compiler.typechecker.model.ModuleImport;
 import com.redhat.ceylon.compiler.typechecker.model.Modules;
 import com.redhat.ceylon.compiler.typechecker.model.Package;
+import com.redhat.ceylon.compiler.typechecker.model.Parameter;
 import com.redhat.ceylon.compiler.typechecker.model.ParameterList;
 import com.redhat.ceylon.compiler.typechecker.model.ProducedType;
 import com.redhat.ceylon.compiler.typechecker.model.Scope;
@@ -792,7 +793,7 @@ public abstract class AbstractModelLoader implements ModelCompleter, ModelLoader
         
         // Now mark all Values for which Setters exist as variable
         for(String var : variables){
-            Declaration decl = klass.getMember(var);
+            Declaration decl = klass.getMember(var, null);
             if (decl != null && decl instanceof Value) {
                 ((Value)decl).setVariable(true);
             } else {
@@ -826,13 +827,28 @@ public abstract class AbstractModelLoader implements ModelCompleter, ModelLoader
     private void fillRefinedDeclarations(ClassOrInterface klass) {
         for(Declaration member : klass.getMembers()){
             if(member.isActual()){
-                member.setRefinedDeclaration(findRefinedDeclaration(klass, member.getName()));
+                member.setRefinedDeclaration(findRefinedDeclaration(klass, member.getName(), getSignature(member)));
             }
         }
     }
 
-    private Declaration findRefinedDeclaration(ClassOrInterface decl, String name) {
-        Declaration refinedDeclaration = decl.getRefinedMember(name);
+    private List<ProducedType> getSignature(Declaration decl) {
+        List<ProducedType> result = null;
+        if (decl instanceof Functional) {
+            Functional func = (Functional)decl;
+            if (func.getParameterLists().size() > 0) {
+                List<Parameter> params = func.getParameterLists().get(0).getParameters();
+                result = new ArrayList<ProducedType>(params.size());
+                for (Parameter p : params) {
+                    result.add(p.getType());
+                }
+            }
+        }
+        return result;
+    }
+    
+    private Declaration findRefinedDeclaration(ClassOrInterface decl, String name, List<ProducedType> signature) {
+        Declaration refinedDeclaration = decl.getRefinedMember(name, signature);
         if(refinedDeclaration == null)
             throw new RuntimeException("Failed to find refined declaration for "+name);
         return refinedDeclaration;
@@ -1293,7 +1309,7 @@ public abstract class AbstractModelLoader implements ModelCompleter, ModelLoader
         Module languageModule = modules.getLanguageModule();
         String simpleName = name.substring(name.lastIndexOf(".")+1);
         for(Package pkg : languageModule.getPackages()){
-            Declaration member = pkg.getDirectMember(simpleName);
+            Declaration member = pkg.getDirectMember(simpleName, null);
             if(member != null)
                 return ((TypeDeclaration)member).getType();
         }
