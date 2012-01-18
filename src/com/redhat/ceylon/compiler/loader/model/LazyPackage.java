@@ -48,7 +48,7 @@ public class LazyPackage extends Package {
     }
     
     @Override
-    public Declaration getImportedMember(String name, List<ProducedType> signature) {
+    public Declaration getMember(String name, List<ProducedType> signature) {
         // FIXME: what use is this method in the type checker?
         return getDirectMember(name, signature);
     }
