@@ -117,7 +117,13 @@ class RuntimeUtil {
             JCExpression reifiedTypeArgument, 
             JCExpression /*Sequential*/ rest, 
             List<JCExpression> /*T...*/elements) {
-        return makeUtilInvocation(typeArgument != null ? List.of(typeArgument) : null, "sequentialCopy", elements.prepend(rest).prepend(reifiedTypeArgument));
+        // Explicitly box the elements into an Object[] to avoid ambiguous varargs invocation
+        JCExpression array = abstractTransformer.make().NewArray(
+                abstractTransformer.make().Type(abstractTransformer.syms().objectType), 
+                List.<JCExpression>nil(), 
+                elements);
+        return makeUtilInvocation(typeArgument != null ? List.of(typeArgument) : null, "sequentialCopy", 
+                List.<JCExpression>of(reifiedTypeArgument, rest, array));
     }
 
     public JCExpression throwableMessage(JCExpression qualExpr) {
@@ -181,6 +187,10 @@ class RuntimeUtil {
 
     public JCExpression getByteArray(JCExpression indexable, JCExpression index) {
         return makeUtilInvocation(null, "getByteArray", List.of(indexable, index));
+    }
+    
+    public JCExpression getStringArray(JCExpression indexable, JCExpression index) {
+        return makeUtilInvocation(null, "getStringArray", List.of(indexable, index));
     }
 
     public JCExpression arrayLength(JCExpression array) {

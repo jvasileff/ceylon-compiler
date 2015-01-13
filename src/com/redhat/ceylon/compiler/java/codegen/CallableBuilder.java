@@ -318,11 +318,11 @@ public class CallableBuilder {
             Constructor ctor = (Constructor)methodClassOrCtor;
             callBuilder.argument(gen.naming.makeNamedConstructorName(ctor));
             for (Parameter parameter : parameterList.getParameters()) {
-                callBuilder.argument(gen.naming.makeQuotedIdent(parameter.getName()));
+                callBuilder.argument(gen.naming.makeQuotedIdent(Naming.getAliasedParameterName(parameter)));
             }
         } else {
             for (Parameter parameter : parameterList.getParameters()) {
-                JCExpression parameterExpr = gen.naming.makeQuotedIdent(parameter.getName());
+                JCExpression parameterExpr = gen.naming.makeQuotedIdent(Naming.getAliasedParameterName(parameter));
                 int flags = 0;
                 ProducedType parameterType = parameter.getType();
                 // this works on the parameter type as declared
@@ -1364,11 +1364,13 @@ public class CallableBuilder {
                         gen.makeQualIdent(makeParamIdent(gen, arity), "get"), 
                         List.<JCExpression>of(gen.expressionGen().applyErasureAndBoxing(gen.make().Literal(a), 
                                 gen.typeFact().getIntegerDeclaration().getType(), false, BoxingStrategy.BOXED, gen.typeFact().getIntegerDeclaration().getType())));
+                Parameter param = paramLists.getParameters().get(a);
                 get = gen.expressionGen().applyErasureAndBoxing(get, 
                         parameterTypes.get(a), 
-                        true, true, BoxingStrategy.UNBOXED, 
+                        true, true, 
+                        (jtFlagsForParameter(param, parameterTypes.get(a)) & JT_NO_PRIMITIVES) == 0 ? BoxingStrategy.UNBOXED : BoxingStrategy.BOXED , 
                         parameterTypes.get(a), 0);
-                Parameter param = paramLists.getParameters().get(a);
+                
                 makeVarForParameter(stmts, param, parameterTypes.get(a),
                         name, get);
                 args.append(name.makeIdent());
@@ -1561,7 +1563,7 @@ public class CallableBuilder {
         // add all parameters
         int i=0;
         for(Parameter param : paramLists.getParameters()){
-            ParameterDefinitionBuilder parameterBuilder = ParameterDefinitionBuilder.systemParameter(gen, param.getName());
+            ParameterDefinitionBuilder parameterBuilder = ParameterDefinitionBuilder.systemParameter(gen, Naming.getAliasedParameterName(param));
             JCExpression paramType = gen.makeJavaType(parameterTypes.get(i));
             parameterBuilder.modifiers(Flags.FINAL);
             parameterBuilder.type(paramType, null);

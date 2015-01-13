@@ -352,6 +352,10 @@ public class ExpressionTest extends CompilerTest {
         compareWithJavaSource("operator/EqualityAndComparisonOperators");
     }
     @Test
+    public void testOprCompareBoxing(){
+        compareWithJavaSource("operator/CompareBoxing");
+    }
+    @Test
     public void testOprLogicalOperators(){
         compareWithJavaSource("operator/LogicalOperators");
     }
@@ -391,6 +395,10 @@ public class ExpressionTest extends CompilerTest {
     @Test
     public void testOprIntPowerWithIntLiteralOptim(){
         compareWithJavaSource("operator/IntPowerWithIntLiteralOptim");
+    }
+    @Test
+    public void testOprPowerBoxing(){
+        compareWithJavaSource("operator/PowerBoxing");
     }
     @Test
     public void testOprIntPowerWithIntLiteralOptimCorrect(){

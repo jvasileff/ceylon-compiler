@@ -27,7 +27,6 @@ import com.redhat.ceylon.compiler.java.codegen.AbstractTransformer.BoxingStrateg
 import com.redhat.ceylon.compiler.typechecker.model.ProducedType;
 import com.redhat.ceylon.compiler.typechecker.tree.Tree;
 import com.redhat.ceylon.compiler.typechecker.tree.Tree.AssignmentOp;
-import com.redhat.ceylon.compiler.typechecker.tree.Tree.BinaryOperatorExpression;
 import com.sun.tools.javac.tree.JCTree;
 
 /**
@@ -50,15 +49,22 @@ public class Operators {
     private static final PrimitiveType[] All = PrimitiveType.values();
 
     public enum OptimisationStrategy {
-        OPTIMISE(true, BoxingStrategy.UNBOXED),
-        OPTIMISE_BOXING(false, BoxingStrategy.INDIFFERENT),
-        NONE(false, BoxingStrategy.BOXED);
+        /** Optimize using the equivalent javac operator */
+        OPTIMISE(true, false, BoxingStrategy.UNBOXED),
+        /** Optimize using the static method (for a value type) */
+        OPTIMISE_VALUE_TYPE(false, true, BoxingStrategy.UNBOXED),
+        /** A special case used for String == */
+        OPTIMISE_BOXING(false, false, BoxingStrategy.INDIFFERENT),
+        /** No optimization possible: Call the (virtual) method corresponding to the ceylon operator */
+        NONE(false, false, BoxingStrategy.BOXED);
         
         private BoxingStrategy boxingStrategy;
         private boolean useJavaOperator;
+        private boolean useValueTypeMethod;
 
-        OptimisationStrategy(boolean useJavaOperator, BoxingStrategy boxingStrategy){
+        OptimisationStrategy(boolean useJavaOperator, boolean useValueTypeMethod, BoxingStrategy boxingStrategy){
             this.useJavaOperator = useJavaOperator;
+            this.useValueTypeMethod = useValueTypeMethod;
             this.boxingStrategy = boxingStrategy;
         }
         
@@ -68,6 +74,10 @@ public class Operators {
         
         public boolean useJavaOperator(){
             return useJavaOperator;
+        }
+        
+        public boolean useValueTypeMethod(){
+            return useValueTypeMethod;
         }
     }
     
@@ -92,7 +102,7 @@ public class Operators {
         BINARY_DIFFERENCE(Tree.DifferenceOp.class, 2, "minus", JCTree.MINUS, IntegerFloatByte),
         BINARY_PRODUCT(Tree.ProductOp.class, 2, "times", JCTree.MUL, IntegerFloat),
         BINARY_QUOTIENT(Tree.QuotientOp.class, 2, "divided", JCTree.DIV, IntegerFloat),
-        BINARY_POWER(Tree.PowerOp.class, 2, "power"),
+        BINARY_POWER(Tree.PowerOp.class, 2, "power", -1),
         BINARY_REMAINDER(Tree.RemainderOp.class, 2, "remainder", JCTree.MOD, PrimitiveType.INTEGER),
         
         BINARY_SCALE(Tree.ScaleOp.class, 2, "scale"),
@@ -113,17 +123,17 @@ public class Operators {
         
         BINARY_EQUAL(Tree.EqualOp.class, 2, "equals", JCTree.EQ, All){
             @Override
-            public OptimisationStrategy getOptimisationStrategy(BinaryOperatorExpression t, AbstractTransformer gen) {
+            public OptimisationStrategy getBinOpOptimisationStrategy(Tree.Term t, Tree.Term leftTerm, Tree.Term rightTerm, AbstractTransformer gen) {
                 // no optimised operator returns a boxed type 
                 if(!t.getUnboxed())
                     return OptimisationStrategy.NONE;
-                OptimisationStrategy left = isTermOptimisable(t.getLeftTerm(), gen);
-                OptimisationStrategy right = isTermOptimisable(t.getRightTerm(), gen);
+                OptimisationStrategy left = isTermOptimisable(leftTerm, gen);
+                OptimisationStrategy right = isTermOptimisable(rightTerm, gen);
                 if(left == OptimisationStrategy.OPTIMISE
                         && right == OptimisationStrategy.OPTIMISE){
                     // these two previous checks ensure that the term is unboxed and has a type model
-                    ProducedType leftType = t.getLeftTerm().getTypeModel();
-                    ProducedType rightType = t.getRightTerm().getTypeModel();
+                    ProducedType leftType = leftTerm.getTypeModel();
+                    ProducedType rightType = rightTerm.getTypeModel();
 
                     // make sure both types are the same, can't optimise otherwise
                     if(!leftType.isExactly(rightType))
@@ -144,8 +154,7 @@ public class Operators {
         BINARY_LARGER(Tree.LargerOp.class, 2, JCTree.EQ, "larger", JCTree.GT, IntegerFloatCharacter),
         BINARY_SMALLER(Tree.SmallerOp.class, 2, JCTree.EQ, "smaller", JCTree.LT, IntegerFloatCharacter),
         BINARY_LARGE_AS(Tree.LargeAsOp.class, 2, JCTree.NE, "smaller",  JCTree.GE, IntegerFloatCharacter),
-        BINARY_SMALL_AS(Tree.SmallAsOp.class, 2, JCTree.NE, "larger", JCTree.LE, IntegerFloatCharacter),
-        ;
+        BINARY_SMALL_AS(Tree.SmallAsOp.class, 2, JCTree.NE, "larger", JCTree.LE, IntegerFloatCharacter);
 
         // we can have either a mapping from Tree operator class
         Class<? extends Tree.OperatorExpression> operatorClass;
@@ -195,30 +204,38 @@ public class Operators {
             this(operatorClass, arity, ceylonMethod, -1);
         }
         
-        public OptimisationStrategy getOptimisationStrategy(Tree.UnaryOperatorExpression t, AbstractTransformer gen){
-            return getOptimisationStrategy(t, t.getTerm(), gen);
-        }
-        public OptimisationStrategy getOptimisationStrategy(Tree.Term expression, Tree.Term term, AbstractTransformer gen){
+        public final OptimisationStrategy getUnOpOptimisationStrategy(Tree.Term expression, Tree.Term term, AbstractTransformer gen){
             // no optimised operator returns a boxed type 
             if(!expression.getUnboxed())
                 return OptimisationStrategy.NONE;
             return isTermOptimisable(term, gen);
         }
         
-        public OptimisationStrategy getOptimisationStrategy(Tree.BinaryOperatorExpression t, AbstractTransformer gen){
-            return getOptimisationStrategy(t, t.getLeftTerm(), t.getRightTerm(), gen);
-        }
-        
-        public OptimisationStrategy getOptimisationStrategy(Tree.Term expression, Tree.Term leftTerm, Tree.Term rightTerm, AbstractTransformer gen){
+        public OptimisationStrategy getBinOpOptimisationStrategy(Tree.Term expression, Tree.Term leftTerm, Tree.Term rightTerm, AbstractTransformer gen){
             // no optimised operator returns a boxed type 
             if(!expression.getUnboxed())
                 return OptimisationStrategy.NONE;
+            // Can we do an operator optimization?
+            OptimisationStrategy optimisationStrategy;
             OptimisationStrategy left = isTermOptimisable(leftTerm, gen);
             OptimisationStrategy right = isTermOptimisable(rightTerm, gen);
-            return lessPermissive(left, right);
+            optimisationStrategy = lessPermissive(left, right);
+            if (optimisationStrategy != OptimisationStrategy.OPTIMISE) {
+                // we can't use operator optimization, but maybe was can
+                // use static value type method to avoid boxing
+                ProducedType leftType = leftTerm.getTypeModel();
+                if (Decl.isValueTypeDecl(leftType)) {
+                    optimisationStrategy = OptimisationStrategy.OPTIMISE_VALUE_TYPE;
+                } else if (leftType.getDeclaration().getSelfType() != null
+                        && Decl.isValueTypeDecl(leftType.getTypeArguments().get(leftType.getDeclaration().getSelfType().getDeclaration()))) {
+                    // a self type of a value type (e.g. Summable<Integer>)
+                    optimisationStrategy = OptimisationStrategy.OPTIMISE_VALUE_TYPE;
+                }
+            }
+            return optimisationStrategy;
         }
         
-        protected final OptimisationStrategy lessPermissive(OptimisationStrategy left, OptimisationStrategy right) {
+        protected static OptimisationStrategy lessPermissive(OptimisationStrategy left, OptimisationStrategy right) {
             // it's from most permissive to less permissive, so return the one with the higher ordinal (less permissive)
             if(left.ordinal() > right.ordinal())
                 return left;

@@ -1733,7 +1733,7 @@ public class ExpressionTransformer extends AbstractTransformer {
         }
 
         JCExpression ret;
-        if(operator.getOptimisationStrategy(op, this).useJavaOperator()){
+        if(operator.getUnOpOptimisationStrategy(op, op.getTerm(), this).useJavaOperator()){
             // optimisation for unboxed types
             JCExpression expr = transformExpression(term, BoxingStrategy.UNBOXED, expectedType);
             // unary + is essentially a NOOP
@@ -1758,13 +1758,13 @@ public class ExpressionTransformer extends AbstractTransformer {
     
     public JCExpression transform(Tree.NotEqualOp op) {
         OperatorTranslation operator = Operators.OperatorTranslation.BINARY_EQUAL;
-        OptimisationStrategy optimisationStrategy = operator.getOptimisationStrategy(op, this);
+        OptimisationStrategy optimisationStrategy = operator.getBinOpOptimisationStrategy(op, op.getLeftTerm(), op.getRightTerm(), this);
         
         // we want it unboxed only if the operator is optimised
         // we don't care about the left erased type, since equals() is on Object
         JCExpression left = transformExpression(op.getLeftTerm(), optimisationStrategy.getBoxingStrategy(), null);
         // we don't care about the right erased type, since equals() is on Object
-        JCExpression expr = transformOverridableBinaryOperator(op.getRightTerm(), null, operator, optimisationStrategy, left, op.getTypeModel());
+        JCExpression expr = transformOverridableBinaryOperator(op.getLeftTerm(), op.getRightTerm(), null, operator, optimisationStrategy, left, op.getTypeModel());
         return at(op).Unary(JCTree.NOT, expr);
     }
 
@@ -1859,7 +1859,7 @@ public class ExpressionTransformer extends AbstractTransformer {
     public JCExpression transform(Tree.IdenticalOp op){
         // The only thing which might be unboxed is boolean, and we can follow the rules of == for optimising it,
         // which are simple and require that both types be booleans to be unboxed, otherwise they must be boxed
-        OptimisationStrategy optimisationStrategy = OperatorTranslation.BINARY_EQUAL.getOptimisationStrategy(op, this);
+        OptimisationStrategy optimisationStrategy = OperatorTranslation.BINARY_EQUAL.getBinOpOptimisationStrategy(op, op.getLeftTerm(), op.getRightTerm(), this);
         JCExpression left = transformExpression(op.getLeftTerm(), optimisationStrategy.getBoxingStrategy(), null);
         JCExpression right = transformExpression(op.getRightTerm(), optimisationStrategy.getBoxingStrategy(), null);
         return at(op).Binary(JCTree.EQ, left, right);
@@ -1903,7 +1903,7 @@ public class ExpressionTransformer extends AbstractTransformer {
         at(op);
         OperatorTranslation andOp = Operators.getOperator(Tree.AndOp.class);
         OptimisationStrategy optimisationStrategy = OptimisationStrategy.OPTIMISE;
-        return make().LetExpr(vars, transformOverridableBinaryOperator(andOp, optimisationStrategy, lower, upper, null, op.getTypeModel()));
+        return make().LetExpr(vars, transformOverridableBinaryOperator(andOp, optimisationStrategy, lower, upper, null, null, op.getTypeModel()));
     }
 
     public JCExpression transformBound(SyntheticName middle, final OperatorTranslation operator, final OptimisationStrategy optimisationStrategy, Tree.Term middleTerm, Tree.Bound bound, boolean isUpper) {
@@ -1919,7 +1919,7 @@ public class ExpressionTransformer extends AbstractTransformer {
             right = middle.makeIdent();
         }
         at(bound);
-        return transformOverridableBinaryOperator(operator, optimisationStrategy, left, right, null, bound.getTypeModel());
+        return transformOverridableBinaryOperator(operator, optimisationStrategy, left, right, null, null, bound.getTypeModel());
     }
 
     public JCExpression transform(Tree.ScaleOp op) {
@@ -1949,7 +1949,7 @@ public class ExpressionTransformer extends AbstractTransformer {
         
         at(op);
         return make().LetExpr(List.<JCStatement>of(scale, scaleable), 
-                transformOverridableBinaryOperator(operator, OptimisationStrategy.NONE, scaleableName.makeIdent(), scaleName.makeIdent(), null, op.getTypeModel()));
+                transformOverridableBinaryOperator(operator, OptimisationStrategy.NONE, scaleableName.makeIdent(), scaleName.makeIdent(), null, null, op.getTypeModel()));
     }
     
     // Arithmetic operators
@@ -2057,25 +2057,25 @@ public class ExpressionTransformer extends AbstractTransformer {
         if (operator == null) {
             return makeErroneous(op, "compiler bug: " + op.getClass() +" is an unhandled operator");
         }
-        OptimisationStrategy optimisationStrategy = operator.getOptimisationStrategy(op, this);
+        OptimisationStrategy optimisationStrategy = operator.getBinOpOptimisationStrategy(op, op.getLeftTerm(), op.getRightTerm(), this);
 
         at(op);
         JCExpression left = transformExpression(op.getLeftTerm(), optimisationStrategy.getBoxingStrategy(), leftType);
         JCExpression right = transformExpression(op.getRightTerm(), optimisationStrategy.getBoxingStrategy(), rightType);
-        return transformOverridableBinaryOperator(operator, optimisationStrategy, left, right, op.getRightTerm(), op.getTypeModel());
+        return transformOverridableBinaryOperator(operator, optimisationStrategy, left, right, op.getLeftTerm(), op.getRightTerm(), op.getTypeModel());
     }
 
-    private JCExpression transformOverridableBinaryOperator(Tree.Term rightTerm, ProducedType rightType,
+    private JCExpression transformOverridableBinaryOperator(Tree.Term leftTerm, Tree.Term rightTerm, ProducedType rightType,
             OperatorTranslation operator, OptimisationStrategy optimisationStrategy, 
             JCExpression left, ProducedType expectedType) {
         JCExpression right = transformExpression(rightTerm, optimisationStrategy.getBoxingStrategy(), rightType);
-        return transformOverridableBinaryOperator(operator, optimisationStrategy, left, right, rightTerm, expectedType);
+        return transformOverridableBinaryOperator(operator, optimisationStrategy, left, right, leftTerm, rightTerm, expectedType);
     }
 
     private JCExpression transformOverridableBinaryOperator(OperatorTranslation originalOperator,
             OptimisationStrategy optimisationStrategy, 
             JCExpression left, JCExpression right,
-            Tree.Term rightTerm, ProducedType expectedType) {
+            Tree.Term leftTerm, Tree.Term rightTerm, ProducedType expectedType) {
         JCExpression result = null;
         
         // optimise if we can
@@ -2111,7 +2111,20 @@ public class ExpressionTransformer extends AbstractTransformer {
             typeArgs = List.<JCExpression>of(makeJavaType(otherSetElementType, JT_TYPE_ARGUMENT));
         }
         
-        result = make().Apply(typeArgs, makeSelect(left, actualOperator.ceylonMethod), args);
+        if (optimisationStrategy.useValueTypeMethod()) {
+            ProducedType leftType = leftTerm.getTypeModel();
+            if (optimisationStrategy == OptimisationStrategy.OPTIMISE_VALUE_TYPE
+                    && leftType.getDeclaration().getSelfType() != null) {
+                leftType = leftType.getTypeArguments().get(leftType.getDeclaration().getSelfType().getDeclaration());
+                left = applyErasureAndBoxing(left, leftTerm, BoxingStrategy.BOXED, 
+                        leftType);
+                left = applyErasureAndBoxing(left, leftType, true, BoxingStrategy.UNBOXED, 
+                        leftType);
+            }
+            result = make().Apply(typeArgs, naming.makeQualIdent(makeJavaType(leftType, JT_NO_PRIMITIVES), actualOperator.ceylonMethod), args.prepend(left));
+        } else {
+            result = make().Apply(typeArgs, makeSelect(left, actualOperator.ceylonMethod), args);
+        }
 
         if (loseComparison) {
             // We cheat slightly bu using == instead of equals, but since those values
@@ -2173,7 +2186,7 @@ public class ExpressionTransformer extends AbstractTransformer {
             @Override
             public JCExpression getNewValue(JCExpression previousValue) {
                 // make this call: previousValue OP RHS
-                JCExpression ret = transformOverridableBinaryOperator(op.getRightTerm(), rightType,
+                JCExpression ret = transformOverridableBinaryOperator(op.getLeftTerm(), op.getRightTerm(), rightType,
                         operator.binaryOperator, 
                         boxResult ? OptimisationStrategy.NONE : OptimisationStrategy.OPTIMISE, 
                         previousValue, op.getTypeModel());
@@ -2194,7 +2207,7 @@ public class ExpressionTransformer extends AbstractTransformer {
         return transformAssignAndReturnOperation(op, op.getLeftTerm(), false, valueType, valueType, new AssignAndReturnOperationFactory() {
             @Override
             public JCExpression getNewValue(JCExpression previousValue) {
-            	JCExpression result = transformOverridableBinaryOperator(op.getRightTerm(), rightType, operator.binaryOperator, OptimisationStrategy.NONE, previousValue, op.getTypeModel());
+            	JCExpression result = transformOverridableBinaryOperator(op.getLeftTerm(), op.getRightTerm(), rightType, operator.binaryOperator, OptimisationStrategy.NONE, previousValue, op.getTypeModel());
             	return result;
             }
         });
@@ -2239,7 +2252,7 @@ public class ExpressionTransformer extends AbstractTransformer {
             return makeErroneous(expr, "compiler bug "+expr.getNodeType() + " is not yet supported");
         }
         
-        OptimisationStrategy optimisationStrategy = operator.getOptimisationStrategy(expr, this);
+        OptimisationStrategy optimisationStrategy = operator.getUnOpOptimisationStrategy(expr, expr.getTerm(), this);
         boolean canOptimise = optimisationStrategy.useJavaOperator();
         
         // only fully optimise if we don't have to access the getter/setter
@@ -2376,7 +2389,7 @@ public class ExpressionTransformer extends AbstractTransformer {
             return makeErroneous(expr, "compiler bug: "+expr.getNodeType() + " is not supported yet");
         }
         
-        OptimisationStrategy optimisationStrategy = operator.getOptimisationStrategy(expr, this);
+        OptimisationStrategy optimisationStrategy = operator.getUnOpOptimisationStrategy(expr, expr.getTerm(), this);
         final boolean canOptimise = optimisationStrategy.useJavaOperator();
         
         Tree.Term term = expr.getTerm();
@@ -2748,10 +2761,19 @@ public class ExpressionTransformer extends AbstractTransformer {
                     argIndex = numArguments;
                 }
             }
-            if(!wrapIntoArray)
+            if(!wrapIntoArray) {
+                if (argIndex== 0 
+                        && invocation.isCallable()
+                        && !invocation.isArgumentSpread(numArguments-1)
+                        ) {
+                    exprAndType = new ExpressionAndType(
+                            make().TypeCast(make().Type(syms().objectType), exprAndType.expression),
+                            make().Type(syms().objectType));
+                }
                 result = result.append(exprAndType);
-            else
+            } else {
                 arrayWrap.append(exprAndType.expression);
+            }
         }
         if (invocation.isIndirect()
                 && invocation.isParameterSequenced(numArguments)
@@ -2982,10 +3004,22 @@ public class ExpressionTransformer extends AbstractTransformer {
     private ExpressionAndType transformArgument(SimpleInvocation invocation,
             int argIndex, BoxingStrategy boxingStrategy) {
         ExpressionAndType exprAndType;
-        final JCExpression expr;
-        final JCExpression type;
-        expr = invocation.getTransformedArgumentExpression(argIndex);
-        type = makeJavaType(invocation.getParameterType(argIndex), boxingStrategy == BoxingStrategy.BOXED ? JT_NO_PRIMITIVES : 0);
+        JCExpression expr = invocation.getTransformedArgumentExpression(argIndex);
+        JCExpression type = makeJavaType(invocation.getParameterType(argIndex), boxingStrategy == BoxingStrategy.BOXED ? JT_NO_PRIMITIVES : 0);
+        if (argIndex == 0
+                && typeFact().isOptionalType(invocation.getParameterType(argIndex))
+                && invocation.getArgumentType(argIndex).isSubtypeOf(typeFact().getNullDeclaration().getType())
+                && ((invocation.getPrimaryDeclaration() instanceof Constructor
+                        && Decl.isDefaultConstructor((Constructor)invocation.getPrimaryDeclaration())) 
+                    || 
+                    (Decl.getConstructedClass(invocation.getPrimaryDeclaration()) != null 
+                            && Decl.getConstructedClass(invocation.getPrimaryDeclaration()).isSerializable()))) {
+            // we've invoking the default constructor, whose first parameter has optional type
+            // with a null argument: That will be ambiguous wrt any named constructors
+            // with otherwise identical signitures, so we need a typecast to
+            // disambiguate
+            expr = make().TypeCast(makeJavaType(invocation.getParameterType(argIndex), boxingStrategy == BoxingStrategy.BOXED ? JT_NO_PRIMITIVES : 0), expr);
+        }
         exprAndType = new ExpressionAndType(expr, type);
         return exprAndType;
     }
@@ -5535,7 +5569,7 @@ public class ExpressionTransformer extends AbstractTransformer {
             if(operator.getArity() == 2){
                 if(right == null)
                     return null;
-                OptimisationStrategy optimisationStrategy = operator.getOptimisationStrategy(node, left, right, this);
+                OptimisationStrategy optimisationStrategy = operator.getBinOpOptimisationStrategy(node, left, right, this);
                 // check that we can optimise it
                 if(!optimisationStrategy.useJavaOperator())
                     return null;
@@ -5548,7 +5582,7 @@ public class ExpressionTransformer extends AbstractTransformer {
                 // must be unary
                 if(right != null)
                     return null;
-                OptimisationStrategy optimisationStrategy = operator.getOptimisationStrategy(node, left, this);
+                OptimisationStrategy optimisationStrategy = operator.getUnOpOptimisationStrategy(node, left, this);
                 // check that we can optimise it
                 if(!optimisationStrategy.useJavaOperator())
                     return null;

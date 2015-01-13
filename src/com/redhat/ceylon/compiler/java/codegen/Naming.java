@@ -30,6 +30,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
+import com.redhat.ceylon.common.JVMModuleUtil;
 import com.redhat.ceylon.compiler.java.util.Util;
 import com.redhat.ceylon.compiler.loader.model.FieldValue;
 import com.redhat.ceylon.compiler.loader.model.JavaBeanValue;
@@ -230,98 +231,17 @@ public class Naming implements LocalId {
     
     /** Quote the given name by prefixing it with a dollar ($) */
     public static String quote(String name) {
-        return "$"+name;
+        return JVMModuleUtil.quote(name);
     }
 
-    private static final HashSet<String> tokens;
-    private static final String[] tokensArray =         new String[]{
-        "abstract",
-        "assert",
-        "boolean",
-        "break",
-        "byte",
-        "case",
-        "catch",
-        "char",
-        "class",
-        "const",
-        "continue",
-        "default",
-        "do",
-        "double",
-        "else",
-        "enum",
-        "extends",
-        "final",
-        "finally",
-        "float",
-        "for",
-        "goto",
-        "if",
-        "implements",
-        "import",
-        "instanceof",
-        "int",
-        "interface",
-        "long",
-        "native",
-        "new",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "return",
-        "short",
-        "static",
-        "strictfp",
-        "super",
-        "switch",
-        "synchronized",
-        "this",
-        "throw",
-        "throws",
-        "transient",
-        "try",
-        "void",
-        "volatile",
-        "while",
-        "true",
-        "false",
-        "null",
-    };
-    static {
-        tokens = new HashSet<String>();
-        for (String token : tokensArray) {
-            tokens.add(token);
-        }
-    }
     /** Determines whether the given name is a Java keyword */
     public static boolean isJavaKeyword(String name) {
-        return tokens.contains(name);
-    }
-
-    /** Determines whether the given name is a Java keyword */
-    public static boolean isJavaKeyword(String string, int start, int end) {
-        int length = end - start;
-        OUTER:
-        for(int i=0;i<tokensArray.length;i++){
-            String token = tokensArray[i];
-            if(token.length() != length)
-                continue;
-            for(int c=0;c<length;c++){
-                if(string.charAt(c + start) != token.charAt(c))
-                    continue OUTER;
-            }
-            return true;
-        }
-        return false;
+        return JVMModuleUtil.isJavaKeyword(name);
     }
 
     /** Prefixes the given name with a dollar ($) if it is a Java keyword */
     public static String quoteIfJavaKeyword(String name){
-        if(isJavaKeyword(name))
-            return quote(name);
-        return name;
+        return JVMModuleUtil.quoteIfJavaKeyword(name);
     }
 
     private static final HashSet<String> QUOTABLE_METHOD_NAMES;
@@ -679,7 +599,9 @@ public class Naming implements LocalId {
 
     private void appendTypeDeclaration(final TypeDeclaration decl, EnumSet<DeclNameFlag> flags, 
             TypeDeclarationBuilder<?> typeDeclarationBuilder, Scope scope, final boolean last) {
-        if (scope instanceof Class || scope instanceof TypeAlias || scope instanceof Constructor) {
+        if (scope instanceof Class 
+                || scope instanceof TypeAlias 
+                || (scope instanceof Constructor && (scope.equals(decl) || !Decl.isLocalNotInitializerScope(scope)))) {
             TypeDeclaration klass = (TypeDeclaration)scope;
             if(klass.isAnonymous() && !klass.isNamed())
                 typeDeclarationBuilder.clear();
@@ -973,13 +895,18 @@ public class Naming implements LocalId {
         return getAliasedParameterName(parameter.getModel());
     }
     
+    static boolean aliasConstructorParameterName(MethodOrValue mov) {
+        return mov.getContainer() instanceof Constructor && !mov.isShared() && !mov.isCaptured();
+    }
+    
     private static String getAliasedParameterName(MethodOrValue parameter) {
         if (!parameter.isParameter()) {
             throw new BugException();
         }
         MethodOrValue mov = parameter;
         if ((mov instanceof Method && ((Method)mov).isDeferred())
-                || (mov instanceof Value && mov.isVariable() && mov.isCaptured())) {
+                || (mov instanceof Value && mov.isVariable() && mov.isCaptured())
+                || aliasConstructorParameterName(mov)) {
             return suffixName(Suffix.$param$, parameter.getName());
         }
         return quoteIfJavaKeyword(parameter.getName());
