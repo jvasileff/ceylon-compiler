@@ -12,6 +12,6 @@ final class powerBoxing_ {
         final double result4 = .ceylon.language.Float.power(2.0, 2.0);
         final long result5 = .ceylon.language.Integer.power(((.ceylon.language.Integer)intSelf).longValue(), exp);
         final double result6 = .ceylon.language.Float.power(((.ceylon.language.Float)floatSelf).doubleValue(), 2.0);
-        final T result7 = ((.ceylon.language.Exponentiable<T, .ceylon.language.Integer>)(.ceylon.language.Exponentiable)exponentiable).power(.ceylon.language.Integer.instance(exp));
+        final T result7 = ((T)exponentiable).power(.ceylon.language.Integer.instance(exp));
     }
 }

@@ -345,14 +345,7 @@ public abstract class BoxingVisitor extends Visitor {
     public void visit(ArithmeticOp that) {
         super.visit(that);
         // can't optimise the ** operator in Java
-        if(that instanceof PowerOp) {
-            CodegenUtil.markUnBoxed(that);
-            return;
-        }
-        // we are unboxed if both terms are
-        if(that.getLeftTerm().getUnboxed()
-                && that.getRightTerm().getUnboxed())
-            CodegenUtil.markUnBoxed(that);
+        CodegenUtil.markUnBoxed(that);
     }
 
     @Override
@@ -588,7 +581,9 @@ public abstract class BoxingVisitor extends Visitor {
         Tree.Expression elseExpr = that.getElseClause().getExpression();
         if(ifExpr == null || elseExpr == null)
             return;
-        if(CodegenUtil.isUnBoxed(ifExpr) && CodegenUtil.isUnBoxed(elseExpr))
+        if(CodegenUtil.isUnBoxed(ifExpr) 
+                && CodegenUtil.isUnBoxed(elseExpr)
+                && !willEraseToObject(that.getUnit().denotableType(that.getTypeModel())))
             CodegenUtil.markUnBoxed(that);
         if(CodegenUtil.isRaw(ifExpr) || CodegenUtil.isRaw(elseExpr))
             CodegenUtil.markRaw(that);
@@ -635,7 +630,8 @@ public abstract class BoxingVisitor extends Visitor {
             if(CodegenUtil.hasUntrustedType(expr))
                 CodegenUtil.markUntrustedType(that);
         }
-        if(unboxed)
+        if(unboxed 
+                && !willEraseToObject(that.getUnit().denotableType(that.getTypeModel())))
             CodegenUtil.markUnBoxed(that);
     }
     
@@ -646,5 +642,18 @@ public abstract class BoxingVisitor extends Visitor {
                 || that.getLetClause().getExpression() == null)
             return;
         propagateFromTerm(that, that.getLetClause().getExpression());
+    }
+    
+    @Override
+    public void visit(Tree.DefaultOp that) {
+        super.visit(that);
+        if (Util.unwrapExpressionUntilTerm(that.getLeftTerm()) instanceof Tree.ThenOp) {
+            Tree.ThenOp then = (Tree.ThenOp)Util.unwrapExpressionUntilTerm(that.getLeftTerm());
+            if (CodegenUtil.isUnBoxed(that.getRightTerm())
+                    && CodegenUtil.isUnBoxed(then.getRightTerm())
+                    && !willEraseToObject(that.getUnit().denotableType(that.getTypeModel()))) {
+                        CodegenUtil.markUnBoxed(that);
+            }
+        }
     }
 }

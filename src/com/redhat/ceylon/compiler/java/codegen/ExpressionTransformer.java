@@ -365,8 +365,9 @@ public class ExpressionTransformer extends AbstractTransformer {
             statementGen().noExpressionlessReturn = prevNoExpressionlessReturn;
         }
 
-        ProducedType callableType = functionArg.getTypeModel();
-        CallableBuilder callableBuilder = CallableBuilder.methodArgument(gen(), 
+        ProducedType callableType = model.getTypedReference().getFullType();//functionArg.getTypeModel();
+        CallableBuilder callableBuilder = CallableBuilder.methodArgument(gen(),
+                model,
                 callableType, 
                 Collections.singletonList(functionArg.getParameterLists().get(0)),
                 classGen().transformMplBody(functionArg.getParameterLists(), model, body));
@@ -524,6 +525,13 @@ public class ExpressionTransformer extends AbstractTransformer {
                 canCast = true;
         }
 
+        // If expr type if Self<T> and expected type is T we need to cast before any unboxing
+        if (exprType.getDeclaration().getSelfType() != null
+                && expectedType != null
+                && expectedType.isExactly(exprType.getTypeArguments().get(exprType.getDeclaration().getSelfType().getDeclaration()))) {
+            result = applySelfTypeCasts(result, exprType, exprBoxed, BoxingStrategy.BOXED, expectedType);
+            exprType = expectedType;
+        }
         // we must do the boxing after the cast to the proper type
         JCExpression ret = boxUnboxIfNecessary(result, exprBoxed, exprType, boxingStrategy);
         
@@ -1805,10 +1813,23 @@ public class ExpressionTransformer extends AbstractTransformer {
     }
 
     public JCExpression transform(Tree.DefaultOp op, ProducedType expectedType) {
+        Term elseTerm = Util.unwrapExpressionUntilTerm(op.getRightTerm());
+        if (Util.unwrapExpressionUntilTerm(op.getLeftTerm()) instanceof Tree.ThenOp) {
+            // Optimize cond then foo else bar (avoids unnecessary boxing in particular)
+            Tree.ThenOp then = (Tree.ThenOp)Util.unwrapExpressionUntilTerm(op.getLeftTerm());
+            Term condTerm = then.getLeftTerm();
+            Term thenTerm = then.getRightTerm();
+            JCExpression cond = transformExpression(condTerm, BoxingStrategy.UNBOXED, condTerm.getTypeModel());
+            JCExpression thenpart = transformExpression(thenTerm, CodegenUtil.getBoxingStrategy(op), 
+                    op.getTypeModel());
+            JCExpression elsepart = transformExpression(elseTerm, CodegenUtil.getBoxingStrategy(op), 
+                    op.getTypeModel());
+            return make().Conditional(cond, thenpart, elsepart);
+        }
         JCExpression left = transformExpression(op.getLeftTerm(), BoxingStrategy.BOXED, typeFact().getOptionalType(op.getTypeModel()));
         // make sure we do not insert null checks if we're going to allow testing for null
-        ProducedType rightExpectedType = getOptionalTypeForInteropIfAllowed(expectedType, op.getTypeModel(), op.getRightTerm());
-        JCExpression right = transformExpression(op.getRightTerm(), BoxingStrategy.BOXED, rightExpectedType);
+        ProducedType rightExpectedType = getOptionalTypeForInteropIfAllowed(expectedType, op.getTypeModel(), elseTerm);
+        JCExpression right = transformExpression(elseTerm, BoxingStrategy.BOXED, rightExpectedType);
         Naming.SyntheticName varName = naming.temp();
         JCExpression varIdent = varName.makeIdent();
         JCExpression test = at(op).Binary(JCTree.NE, varIdent, makeNull());
@@ -2037,9 +2058,13 @@ public class ExpressionTransformer extends AbstractTransformer {
     
     private JCExpression transformOverridableBinaryOperator(Tree.BinaryOperatorExpression op, Interface compoundType, int typeArgumentToUse) {
         ProducedType leftType = getSupertype(op.getLeftTerm(), compoundType);
+        ProducedType leftSelf = leftType.getDeclaration().getSelfType();
+        if (leftSelf != null) {
+            leftType = leftType.getTypeArguments().get(leftSelf.getDeclaration());
+        }
         // the right type always only depends on the LHS so let's not try to find it on the right side because it may
         // be undecidable: https://github.com/ceylon/ceylon-compiler/issues/1535
-        ProducedType rightType = getTypeArgument(leftType, typeArgumentToUse);
+        ProducedType rightType = getTypeArgument(getSupertype(op.getLeftTerm(), compoundType), typeArgumentToUse);
         // we do have a special case which is when the LHS is Float and RHS is Integer and the typechecker allowed coercion
         if(getSupertype(op.getLeftTerm(), typeFact().getFloatDeclaration()) != null
                 && getSupertype(op.getRightTerm(), typeFact().getIntegerDeclaration()) != null){
@@ -2116,10 +2141,6 @@ public class ExpressionTransformer extends AbstractTransformer {
             if (optimisationStrategy == OptimisationStrategy.OPTIMISE_VALUE_TYPE
                     && leftType.getDeclaration().getSelfType() != null) {
                 leftType = leftType.getTypeArguments().get(leftType.getDeclaration().getSelfType().getDeclaration());
-                left = applyErasureAndBoxing(left, leftTerm, BoxingStrategy.BOXED, 
-                        leftType);
-                left = applyErasureAndBoxing(left, leftType, true, BoxingStrategy.UNBOXED, 
-                        leftType);
             }
             result = make().Apply(typeArgs, naming.makeQualIdent(makeJavaType(leftType, JT_NO_PRIMITIVES), actualOperator.ceylonMethod), args.prepend(left));
         } else {
@@ -2542,7 +2563,7 @@ public class ExpressionTransformer extends AbstractTransformer {
                 Tree.SpecifierExpression lazy = (Tree.SpecifierExpression)spec;
                 Method fp = (Method)fpTree.getParameterModel().getModel();
                 
-                expr = CallableBuilder.anonymous(gen(), lazy.getExpression(), 
+                expr = CallableBuilder.anonymous(gen(), (Method)fpTree.getTypedDeclaration().getDeclarationModel(), lazy.getExpression(), 
                         ((Tree.MethodDeclaration)fpTree.getTypedDeclaration()).getParameterLists(),
                         getTypeForFunctionalParameter(fp),
                         true).build();
@@ -3105,7 +3126,7 @@ public class ExpressionTransformer extends AbstractTransformer {
                 callBuilder.arrayRead(transformedPrimary.expr);
             else if(transformedPrimary.selector.equals("set")){
                 callBuilder.arrayWrite(transformedPrimary.expr);
-                ProducedType arrayType = invocation.getQmePrimary().getTypeModel();
+                ProducedType arrayType = invocation.getQmePrimary().getTypeModel().resolveAliases();
                 if(isJavaObjectArray(arrayType) && invocation instanceof PositionalInvocation){
                     ProducedType elementType = arrayType.getTypeArgumentList().get(0);
                     ProducedType argumentType = ((PositionalInvocation)invocation).getArgumentType(1);
@@ -4568,20 +4589,26 @@ public class ExpressionTransformer extends AbstractTransformer {
         ProducedType leftCorrespondenceOrRangeType = leftType.getSupertype(leftSuperTypeDeclaration);
         ProducedType rightType = getTypeArgument(leftCorrespondenceOrRangeType, 0);
         
-        JCExpression lhs = transformExpression(access.getPrimary(), BoxingStrategy.BOXED, leftCorrespondenceOrRangeType);
-        
         // now find the access code
         JCExpression safeAccess;
         
         if(isElement){
+            // can we use getFromFirst() to avoid boxing the index?
+            boolean listOptim =  
+                    leftType.isSubtypeOf(typeFact().getListDeclaration().getProducedType(
+                            null, Collections.singletonList(typeFact().getAnythingDeclaration().getType())));
+            
+            JCExpression lhs = transformExpression(access.getPrimary(), BoxingStrategy.BOXED, 
+                    listOptim ? leftType.getSupertype(typeFact().getListDeclaration()) : leftCorrespondenceOrRangeType);
+            
             Tree.Element element = (Tree.Element) elementOrRange;
             
             // do the index
-            JCExpression index = transformExpression(element.getExpression(), BoxingStrategy.BOXED, rightType);
+            JCExpression index = transformExpression(element.getExpression(), listOptim ? BoxingStrategy.UNBOXED : BoxingStrategy.BOXED, rightType);
 
             // tmpVar.item(index)
             safeAccess = at(access).Apply(List.<JCTree.JCExpression>nil(), 
-                                          makeSelect(lhs, "get"), List.of(index));
+                                          makeSelect(lhs, listOptim ? "getFromFirst" : "get"), List.of(index));
             // Because tuple index access has the type of the indexed element
             // (not the union of types in the sequential) a typecast may be required.
             ProducedType sequentialElementType = getTypeArgument(leftCorrespondenceOrRangeType, 1);
@@ -4596,6 +4623,7 @@ public class ExpressionTransformer extends AbstractTransformer {
                                                CodegenUtil.hasTypeErased(access), true, BoxingStrategy.BOXED, 
                                                expectedType, flags);
         }else{
+            JCExpression lhs = transformExpression(access.getPrimary(), BoxingStrategy.BOXED, leftCorrespondenceOrRangeType);
             // do the indices
             Tree.ElementRange range = (Tree.ElementRange) elementOrRange;
             JCExpression start = transformExpression(range.getLowerBound(), BoxingStrategy.BOXED, rightType);
@@ -4688,6 +4716,7 @@ public class ExpressionTransformer extends AbstractTransformer {
             Method decl = (Method) ((Tree.MemberOrTypeExpression)paramExpr.getPrimary()).getDeclaration();
             CallableBuilder callableBuilder = CallableBuilder.anonymous(
                     gen(),
+                    decl,
                     (Tree.Expression)rightTerm,
                     paramExpr.getParameterLists(),
                     paramExpr.getPrimary().getTypeModel(),

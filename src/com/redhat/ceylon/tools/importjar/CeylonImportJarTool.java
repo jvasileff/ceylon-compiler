@@ -64,6 +64,7 @@ import com.redhat.ceylon.common.tool.OptionArgument;
 import com.redhat.ceylon.common.tool.RemainingSections;
 import com.redhat.ceylon.common.tool.Summary;
 import com.redhat.ceylon.common.tool.ToolUsageError;
+import com.redhat.ceylon.common.tools.CeylonTool;
 import com.redhat.ceylon.common.tools.ModuleSpec;
 
 @Summary("Imports a jar file into a Ceylon module repository")
@@ -96,17 +97,6 @@ public class CeylonImportJarTool extends OutputRepoUsingTool {
         super(ImportJarMessages.RESOURCE_BUNDLE);
     }
     
-    CeylonImportJarTool(String moduleSpec, String out, String user, String pass, File jarFile, String verbose) {
-        super(ImportJarMessages.RESOURCE_BUNDLE);
-        setModuleSpec(moduleSpec);
-        this.out = out;
-        this.user = user;
-        this.pass = pass;
-        this.jarFile = jarFile;
-        this.verbose = verbose;
-        initialize();
-    }
-
     @OptionArgument(argumentName="file")
     @Description("Specify a module.xml or module.properties file to be used "
             + "as the module descriptor")
@@ -166,7 +156,7 @@ public class CeylonImportJarTool extends OutputRepoUsingTool {
     }
 
     @Override
-    public void initialize() {
+    public void initialize(CeylonTool mainTool) {
         setSystemProperties();
         File f = applyCwd(jarFile);
         checkReadableFile(f, "error.jarFile", true);
